@@ -68,7 +68,7 @@ The named volumes `postgres_data` and `minio_data` persist data across normal re
 
 ## Environment configuration
 
-`.env.example` is the Compose-level configuration. `backend/.env.example` documents API settings, and `frontend/.env.example` documents frontend and proxy settings. Copying the root file is sufficient for Docker Compose; the component files are reference templates for local development.
+`.env.example` is the single environment template for the entire repository. Copy it to `.env` at the repository root; Docker Compose, the backend, and the Vite development server all use that root file. Keep secrets such as `OPENROUTER_API_KEY` and `VAULTVOICE_ENCRYPTION_KEY` only in the uncommitted root `.env`.
 
 Important variables include `APP_NAME`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_BASE_URL`, `VAULTVOICE_ENCRYPTION_KEY`, `DATABASE_URL`, `PORT`, the PostgreSQL credentials, the MinIO credentials and bucket, `MAX_UPLOAD_BYTES`, `RATE_LIMIT`, and the host-side ports. `BACKEND_PORT` is the backend service and published host port used by Compose; `PORT` is the equivalent backend setting for standalone execution.
 
