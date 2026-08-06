@@ -29,18 +29,24 @@ class ObjectStorage:
 
     def put_encrypted(self, object_key: str, content: bytes, content_type: str) -> str:
         nonce = secrets.token_bytes(12)
-        encrypted = nonce + AESGCM(self.key()).encrypt(nonce, content, None)
+        try:
+            encrypted = nonce + AESGCM(self.key()).encrypt(nonce, content, None)
+        except Exception as exc:
+            raise RuntimeError(f"AESGCM encryption failed: {exc}")
         self.client.put_object(self.settings.minio_bucket, object_key, io.BytesIO(encrypted), len(encrypted), content_type="application/octet-stream", metadata={"X-Amz-Meta-Integrity-Hash": hashlib.sha256(content).hexdigest()})
         return object_key
 
     def get_decrypted(self, object_key: str) -> bytes:
-        response = self.client.get_object(self.settings.minio_bucket, object_key)
         try:
-            encrypted = response.read()
-        finally:
-            response.close()
-            response.release_conn()
-        return AESGCM(self.key()).decrypt(encrypted[:12], encrypted[12:], None)
+            response = self.client.get_object(self.settings.minio_bucket, object_key)
+            try:
+                encrypted = response.read()
+            finally:
+                response.close()
+                response.release_conn()
+            return AESGCM(self.key()).decrypt(encrypted[:12], encrypted[12:], None)
+        except Exception as exc:
+            raise RuntimeError(f"AESGCM decryption failed: {exc}")
 
     def presigned_url(self, object_key: str) -> str:
         """Return a short-lived URL for the encrypted object.
