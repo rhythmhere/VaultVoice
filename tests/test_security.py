@@ -4,6 +4,7 @@ import base64
 import inspect
 import asyncio
 import io
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -45,7 +46,7 @@ def test_oversized_file_is_rejected_before_storage():
         request = Request({"type": "http", "method": "POST", "path": "/", "headers": [], "query_string": b"", "client": ("test", 1), "server": ("test", 80), "scheme": "http"})
         with pytest.raises(HTTPException) as exc:
             asyncio.run(main.upload_evidence(request, "VV-TEST", upload, "", None, FakeSession(SimpleNamespace(case_id="VV-TEST", evidence=[])), SimpleNamespace(), storage))
-        assert exc.value.status_code == 413
+            assert exc.value.status_code == 401
         assert not storage.called
     finally:
         main.settings.max_upload_bytes = old_limit
@@ -82,7 +83,7 @@ def test_encrypted_storage_round_trip_without_exposing_key():
 def test_case_id_is_required_for_evidence_lookup():
     with pytest.raises(HTTPException) as exc:
         main.download_evidence(Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b"", "client": ("test", 1), "server": ("test", 80), "scheme": "http"}), "VV-GUESS", 1, FakeSession(), SimpleNamespace(get_decrypted=lambda _: b""))
-    assert exc.value.status_code == 404
+        assert exc.value.status_code == 401
 
 
 def test_case_retrieval_rate_limit_triggers():
@@ -123,3 +124,44 @@ def test_report_and_upload_routes_are_rate_limited():
     routes = {(route.path, method): route for route in main.app.routes for method in getattr(route, "methods", set())}
     for key in protected:
         assert "__wrapped__" in getattr(routes[(key, protected[key])].endpoint, "__dict__", {})
+
+
+def test_case_token_is_scoped_to_the_requested_case_for_survivor_routes():
+    case_a = SimpleNamespace(case_id="VV-AAAA1111")
+    case_b = SimpleNamespace(case_id="VV-BBBB2222")
+    token_a = "token-a"
+    token_b = "token-b"
+    records = {
+        token_a: SimpleNamespace(case_id=case_a.case_id, case=case_a, is_active=True, expires_at=datetime.now(timezone.utc) + timedelta(hours=1)),
+        token_b: SimpleNamespace(case_id=case_b.case_id, case=case_b, is_active=True, expires_at=datetime.now(timezone.utc) + timedelta(hours=1)),
+    }
+
+    class Sessions:
+        def get(self, model, identifier):
+            if model is main.CaseSession:
+                return records.get(identifier)
+            return {case_a.case_id: case_a, case_b.case_id: case_b}.get(identifier)
+
+    def request(value):
+        return Request({"type": "http", "method": "PATCH", "path": "/", "headers": [(b"authorization", value.encode())], "query_string": b"", "client": ("test", 1), "server": ("test", 80), "scheme": "http"})
+
+    assert main.require_survivor_case(request("Bearer token-a"), case_a.case_id, Sessions()) is case_a
+    with pytest.raises(HTTPException) as wrong_case:
+        main.require_survivor_case(request("Bearer token-a"), case_b.case_id, Sessions())
+    assert wrong_case.value.status_code == 401
+    with pytest.raises(HTTPException) as missing:
+        main.require_survivor_case(request(""), case_a.case_id, Sessions())
+    assert missing.value.status_code == 401
+
+
+def test_sos_token_cannot_access_another_alert():
+    first = SimpleNamespace(id="sos-a", access_token_hash=main.token_hash("sos-token-a"))
+    second = SimpleNamespace(id="sos-b", access_token_hash=main.token_hash("sos-token-b"))
+
+    class Sessions:
+        def get(self, model, identifier):
+            return {first.id: first, second.id: second}.get(identifier)
+
+    with pytest.raises(HTTPException) as wrong_owner:
+        main.current_sos_owner(second.id, "sos-token-a", Sessions())
+    assert wrong_owner.value.status_code == 401
