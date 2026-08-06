@@ -1,0 +1,10 @@
+node_modules/
+dist/
+backend/data/*.db
+backend/data/evidence/
+backend/data/.evidence.key
+__pycache__/
+*.pyc
+.env
+*.md
+!README.md
