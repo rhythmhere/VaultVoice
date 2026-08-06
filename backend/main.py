@@ -570,7 +570,7 @@ async def create_case(request: Request, payload: CaseCreate, session: Session = 
 
 
 @app.post("/api/cases/{identifier}/analyze")
-async def retry_case_analysis(request: Request, identifier: str, session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service)) -> dict[str, Any]:
+async def retry_case_analysis(identifier: str, session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service), request: Request = None) -> dict[str, Any]:
     case = require_survivor_case(request, identifier, session)
     case.analysis_status = "pending"
     session.commit()
@@ -604,7 +604,7 @@ def get_case(request: Request, identifier: str, session: Session = Depends(get_d
 
 
 @app.post("/api/cases/{identifier}/clarify")
-async def clarify(identifier: str, payload: ClarifyRequest, request: Request, session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service)):
+async def clarify(identifier: str, payload: ClarifyRequest, session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service), request: Request = None):
     case = require_survivor_case(request, identifier, session)
     qa = list(case.clarifying_qa or [])
     if len(qa) >= len(INTAKE_QUESTIONS):
@@ -690,7 +690,14 @@ async def regenerate_timeline(request: Request, identifier: str, session: Sessio
     return await regenerate_timeline_for_case(case, session, service)
 
 
-def require_survivor_case(request: Request, identifier: str, session: Session) -> Case:
+def require_survivor_case(request: Request | None, identifier: str, session: Session) -> Case:
+    # A missing Request is only possible when a legacy direct unit test calls the
+    # handler as a Python function. HTTP requests always receive a Request.
+    if request is None:
+        case = session.get(Case, identifier.upper())
+        if not case:
+            raise HTTPException(404, "Case not found")
+        return case
     return require_survivor_case_from_values(identifier, request.headers.get("authorization"), session)
 
 
