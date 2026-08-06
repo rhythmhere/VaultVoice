@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Any
 
 import httpx
@@ -29,12 +30,20 @@ class OpenRouterAIService:
         try:
             async with httpx.AsyncClient(timeout=45) as client:
                 response = await client.post(f"{self.settings.openrouter_base_url}/chat/completions", headers=headers, json=body)
+                # Provider errors contain only structural diagnostics here; never log prompts.
+                if response.status_code >= 400:
+                    logging.getLogger("vaultvoice.ai").error(
+                        "OpenRouter response status=%s body=%s",
+                        response.status_code,
+                        response.text[:4000],
+                    )
                 response.raise_for_status()
                 return response.json()["choices"][0]["message"]["content"]
         except (httpx.HTTPError, KeyError, IndexError, TypeError) as exc:
+            logging.getLogger("vaultvoice.ai").exception("OpenRouter request/response failure: %r", exc)
             raise AIServiceError("OpenRouter request failed") from exc
 
-    async def analyze_report(self, category: str, report: str, qa: list[dict[str, str]]) -> dict[str, Any]:
+    async def analyze_report(self, category: str, report: str, qa: list[dict[str, Any]]) -> dict[str, Any]:
         system = """You are VaultVoice, a supportive legal-information assistant for survivors in Nepal. You are not a lawyer. Ground all legal claims only in the reference context. Be calm, non-judgmental, and support English, Nepali, and code-switched input. Return valid JSON only with keys: clarifying_questions (array of at most 3 short questions), legal_summary (string), severity (one of low, moderate, urgent). Ask questions only when the report is not yet sufficiently clear; otherwise return an empty array. Never invent laws, contacts, or facts."""
         user = f"REFERENCE CONTEXT:\n{LEGAL_CONTEXT}\n\nCATEGORY: {category}\nREPORT:\n{report}\nPRIOR QUESTIONS/ANSWERS:\n{json.dumps(qa, ensure_ascii=False)}"
         raw = await self._complete(system, user)
