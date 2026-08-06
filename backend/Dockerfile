@@ -15,10 +15,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /opt/venv /opt/venv
 COPY alembic.ini /app/alembic.ini
 COPY alembic /app/alembic
 COPY backend /app/backend
+COPY scripts /app/scripts
 RUN chmod +x /app/backend/entrypoint.sh \
     && addgroup --system app \
     && adduser --system --ingroup app app \
