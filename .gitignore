@@ -8,6 +8,7 @@ __pycache__/
 .env
 *.md
 !README.mds
+!vaultvoiceapp/README.md
 backups/
 KEY_ROTATION_AND_FIX_SUMMARY.txt
 =0.6.0
