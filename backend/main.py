@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from .ai_service import AIServiceError, OpenRouterAIService
 from .config import get_settings
 from .db import Case, CaseMatch, CaseMessage, CaseMessageRead, CaseNote, CaseStatusLog, CommissionAuditLog, CommissionRecord, CrowdfundingCampaign, CrowdfundingDonation, CrowdfundingRequest, Evidence, NGOAccount, NGODocument, NGOVerificationLog, Organization, PlatformDonation, Referral, ReferralAuditLog, Session as CaseSession, SessionLocal
-from .matching import match_case
+from .matching import backfill_organization_matches, match_case, normalize_categories, normalize_districts
 from .seed import seed_organizations
 from .storage import ObjectStorage
 
@@ -750,8 +750,13 @@ def register_ngo(payload: NGORegistration, session: Session = Depends(get_db)) -
     existing = session.scalar(select(Organization).where(func.lower(Organization.name) == payload.name.strip().lower()))
     if existing:
         raise HTTPException(409, "An NGO with this name already exists")
+    try:
+        categories = normalize_categories(payload.categories)
+        districts = normalize_districts(payload.districts)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     token = secrets.token_urlsafe(32)
-    organization = Organization(name=payload.name.strip(), categories=payload.categories, districts=payload.districts, contact_phone=payload.contact_phone.strip(), contact_email=payload.contact_email, website=payload.website, description=payload.description.strip(), verification_status="pending")
+    organization = Organization(name=payload.name.strip(), categories=categories, districts=districts, contact_phone=payload.contact_phone.strip(), contact_email=payload.contact_email, website=payload.website, description=payload.description.strip(), verification_status="pending")
     session.add(organization)
     session.commit()
     session.refresh(organization)
@@ -803,6 +808,7 @@ def approve_ngo(ngo_id: int, payload: NGOReview, session: Session = Depends(get_
     if not organization.account:
         token = secrets.token_urlsafe(32)
         session.add(NGOAccount(ngo_id=organization.id, subscription_tier="free", billing_status="active", commission_agreement=False, api_token_hash=token_hash(token)))
+    backfill_organization_matches(session, organization)
     session.commit()
     session.refresh(organization)
     result = organization_json(organization, token)
@@ -1025,10 +1031,20 @@ def list_ngo_conversations(account: NGOAccount = Depends(current_ngo), session: 
 @app.patch("/api/ngo/profile")
 def update_ngo_profile(payload: NGOProfileUpdate, account: NGOAccount = Depends(current_ngo), session: Session = Depends(get_db)) -> dict[str, Any]:
     organization = account.organization
+    try:
+        categories = normalize_categories(payload.categories) if payload.categories is not None else None
+        districts = normalize_districts(payload.districts) if payload.districts is not None else None
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     for field in ("categories", "districts", "contact_phone", "contact_email", "website", "description"):
         value = getattr(payload, field)
+        if field == "categories":
+            value = categories
+        elif field == "districts":
+            value = districts
         if value is not None:
             setattr(organization, field, value)
+    backfill_organization_matches(session, organization)
     session.commit()
     session.refresh(organization)
     return organization_json(organization)
