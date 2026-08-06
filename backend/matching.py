@@ -3,6 +3,7 @@
 This module deliberately imports only case and matching-domain models. Billing,
 subscriptions, and commissions must never become inputs to survivor matching.
 """
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -12,19 +13,10 @@ from .db import Case, CaseMatch, Organization
 
 
 def match_case(session: Session, case: Case) -> list[dict[str, Any]]:
-    categories = {case.category, "legal_aid"}
-    organizations = session.scalars(select(Organization)).all()
-    ranked: list[tuple[int, Organization]] = []
-    for organization in organizations:
-        score = len(categories.intersection(set(organization.categories))) * 2
-        if case.district in organization.districts:
-            score += 3
-        if score:
-            ranked.append((score, organization))
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    selected = ranked[:5]
+    organizations = [item for item in session.scalars(select(Organization)).all() if getattr(item, "verification_status", "approved") == "approved"]
+    selected = select_best_match(organizations, case)
     existing = {item.organization_id for item in case.matches}
-    for _, organization in selected:
+    for organization in selected:
         if organization.id not in existing:
             session.add(CaseMatch(
                 case_id=case.case_id,
@@ -32,7 +24,39 @@ def match_case(session: Session, case: Case) -> list[dict[str, Any]]:
                 match_reason=match_reason(case),
             ))
     session.commit()
-    return [organization_json(organization, match_reason(case)) for _, organization in selected]
+    return [organization_json(organization, match_reason(case)) for organization in selected]
+
+
+def select_best_match(organizations: list[Organization], case: Case) -> list[Organization]:
+    """Return all relevant matches without consulting any billing data."""
+    needs = {
+        "domestic_violence": {"domestic_violence", "shelter", "medical", "counselling"},
+        "harassment": {"harassment", "counselling", "legal_aid"},
+        "stalking": {"stalking", "shelter", "counselling", "legal_aid"},
+        "workplace": {"workplace", "legal_aid", "counselling"},
+        "other": {"other", "counselling"},
+    }.get(case.category, {case.category})
+    def tier(organization: Organization) -> int | None:
+        categories = set(organization.categories)
+        district_match = case.district in organization.districts
+        specialization_match = bool(categories & needs)
+        if specialization_match and district_match:
+            return 0
+        if specialization_match:
+            return 1
+        if "legal_aid" in categories and district_match:
+            return 2
+        if "legal_aid" in categories:
+            return 3
+        return None
+
+    eligible = [(tier(organization), organization) for organization in organizations]
+    eligible = [(rank, organization) for rank, organization in eligible if rank is not None]
+    if not eligible:
+        return []
+    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    eligible.sort(key=lambda item: (item[0], getattr(item[1], "created_at", None) or epoch, item[1].id))
+    return [organization for _, organization in eligible]
 
 
 def match_reason(case: Case) -> str:
@@ -43,6 +67,7 @@ def organization_json(organization: Organization, reason: str) -> dict[str, Any]
     return {
         "id": organization.id,
         "name": organization.name,
+        "categories": organization.categories or [],
         "contact_phone": organization.contact_phone,
         "contact_email": organization.contact_email,
         "website": organization.website,
