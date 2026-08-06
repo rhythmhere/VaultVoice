@@ -111,6 +111,12 @@ npm run dev
 - `POST /api/cases/{case_id}/evidence` encrypts and stores evidence, then regenerates the timeline.
 - `GET /api/cases/{case_id}/evidence/{id}` decrypts and streams evidence.
 - `GET /api/cases/{case_id}/matches` returns explainable organization matches.
+- `POST /api/ngo/registrations` submits an NGO for admin verification.
+- `GET /api/admin/ngos` and `POST /api/admin/ngos/{ngo_id}/approve|reject` manage NGO onboarding.
+- `GET /api/admin/cases` returns the emergency-first admin case queue.
+- `GET /api/ngo/dashboard` returns emergency-first referrals and NGO metrics.
+- `PATCH /api/ngo/referrals/{referral_id}/case-status` updates `pending`, `processing`, or `completed`.
+- `GET|POST /api/ngo/referrals/{referral_id}/notes` manages NGO case notes.
 - `PATCH /api/cases/{case_id}/status` updates `open`, `ngo_contacted`, or `resolved`.
 - `GET /health` and `GET /api/health` report database and object-storage health.
 
