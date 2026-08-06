@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -29,26 +32,78 @@ class SosSheet extends StatefulWidget {
 class _SosSheetState extends State<SosSheet> {
   final note = TextEditingController();
   Position? position;
+  DateTime? locationCapturedAt;
   String location = 'No location shared';
   bool sending = false;
 
   Future<void> locate() async {
     try {
       var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied)
+      if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
+      }
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
+        _logLocationFailure('permission_denied', permission);
         setState(
           () => location =
               'Location permission was not granted. SOS can still be sent.',
         );
         return;
       }
-      position = await Geolocator.getCurrentPosition();
+
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        _logLocationFailure('service_disabled');
+        setState(
+          () => location =
+              'Location services are disabled. SOS can still be sent.',
+        );
+        return;
+      }
+
+      final capturedPosition = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 15),
+        ),
+      );
+      position = capturedPosition;
+      locationCapturedAt = capturedPosition.timestamp;
       setState(() => location = 'Location ready to share');
-    } catch (_) {
-      setState(() => location = 'Location unavailable. SOS can still be sent.');
+    } catch (error, stackTrace) {
+      final status = switch (error) {
+        PermissionDeniedException() => 'permission_denied',
+        LocationServiceDisabledException() => 'service_disabled',
+        TimeoutException() => 'timeout',
+        _ => 'unavailable',
+      };
+      _logLocationFailure(status, error, stackTrace);
+      if (mounted) {
+        setState(
+          () => location = switch (status) {
+            'permission_denied' =>
+              'Location permission was not granted. SOS can still be sent.',
+            'service_disabled' =>
+              'Location services are disabled. SOS can still be sent.',
+            'timeout' =>
+              'Location took too long to respond. SOS can still be sent.',
+            _ => 'Location unavailable. SOS can still be sent.',
+          },
+        );
+      }
+    }
+  }
+
+  void _logLocationFailure(
+    String status, [
+    Object? error,
+    StackTrace? stackTrace,
+  ]) {
+    if (kDebugMode) {
+      debugPrint(
+        '[SOS] Location capture failed: $status${error == null ? '' : ' ($error)'}',
+      );
+      if (stackTrace != null) debugPrintStack(stackTrace: stackTrace);
     }
   }
 
@@ -63,7 +118,7 @@ class _SosSheetState extends State<SosSheet> {
         longitude: position?.longitude,
         accuracy: position?.accuracy,
         locationStatus: position == null ? 'unavailable' : 'captured',
-        capturedAt: position == null ? null : DateTime.now(),
+        capturedAt: locationCapturedAt,
       );
       if (mounted) {
         Navigator.pop(context);
