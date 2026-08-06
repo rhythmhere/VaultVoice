@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from .ai_service import AIServiceError, OpenRouterAIService
 from .config import get_settings
-from .db import Case, CaseMatch, CaseMessage, CaseMessageRead, CaseNote, CaseStatusLog, CommissionAuditLog, CommissionRecord, CrowdfundingCampaign, CrowdfundingDonation, CrowdfundingRequest, Evidence, NGOAccount, NGODocument, NGOVerificationLog, Organization, PlatformDonation, Referral, ReferralAuditLog, Session as CaseSession, SessionLocal
+from .db import Case, CaseMatch, CaseMessage, CaseMessageRead, CaseNote, CaseStatusLog, CommissionAuditLog, CommissionRecord, CrowdfundingCampaign, CrowdfundingDonation, CrowdfundingRequest, Evidence, NGOAccount, NGODocument, NGOVerificationLog, Organization, PlatformDonation, Referral, ReferralAuditLog, SOSAlert, SOSAuditLog, Session as CaseSession, SessionLocal
 from .matching import backfill_organization_matches, match_case, normalize_categories, normalize_districts
 from .seed import seed_organizations
 from .storage import ObjectStorage
@@ -42,7 +42,7 @@ limiter = Limiter(key_func=get_remote_address, default_limits=[settings.rate_lim
 app = FastAPI(title=settings.app_name, version="2.0.0", docs_url="/api/docs")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_methods=["GET", "POST", "PATCH"], allow_headers=["Content-Type", "Authorization"])
+app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_methods=["GET", "POST", "PATCH"], allow_headers=["Content-Type", "Authorization", "X-Admin-Token", "X-NGO-Token", "X-SOS-Token"])
 
 
 class AnalyzeRequest(BaseModel):
@@ -63,6 +63,40 @@ class ClarifyRequest(BaseModel):
 
 class StatusUpdate(BaseModel):
     status: str = Field(pattern="^(open|ngo_contacted|resolved)$")
+
+
+class SOSCreate(BaseModel):
+    case_id: str | None = Field(default=None, min_length=3, max_length=12)
+    note: str | None = Field(default=None, max_length=2000)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    accuracy: float | None = Field(default=None, ge=0, le=100000)
+    captured_at: datetime | None = None
+    location_status: str = Field(default="not_requested", pattern="^(captured|permission_denied|timeout|unsupported|unavailable|insecure_context|not_requested)$")
+    location_source: str = Field(default="unknown", pattern="^(gps|wifi|cell|unknown)$")
+
+
+class SOSLocationUpdate(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    accuracy: float | None = Field(default=None, ge=0, le=100000)
+    captured_at: datetime | None = None
+    location_source: str = Field(default="unknown", pattern="^(gps|wifi|cell|unknown)$")
+
+
+class SOSAssignment(BaseModel):
+    ngo_id: int
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class SOSStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(acknowledged|assigned|responder_en_route|survivor_contacted|resolved|cancelled)$")
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class SOSPoliceEscalation(BaseModel):
+    status: str = Field(pattern="^(review_requested|contacted|not_needed)$")
+    note: str | None = Field(default=None, max_length=2000)
 
 
 class NGOAccountCreate(BaseModel):
@@ -234,13 +268,20 @@ def current_ngo(x_ngo_token: str | None = Header(default=None), session: Session
     return account
 
 
-def current_case(authorization: str | None = Header(default=None), session: Session = Depends(get_db)) -> Case:
+def current_case(identifier: str, authorization: str | None = Header(default=None), session: Session = Depends(get_db)) -> Case:
     token = bearer_token(authorization)
     record = session.get(CaseSession, token)
-    if not record or not record.is_active or record.expires_at <= now():
+    if not record or not record.is_active or record.expires_at <= now() or record.case_id != identifier.upper():
         raise HTTPException(401, "Invalid or inactive session")
     record.last_accessed = now()
     return record.case
+
+
+def current_sos_owner(identifier: str, x_sos_token: str | None = Header(default=None), session: Session = Depends(get_db)) -> SOSAlert:
+    alert = session.get(SOSAlert, identifier)
+    if not alert or not x_sos_token or not secrets.compare_digest(alert.access_token_hash, token_hash(x_sos_token)):
+        raise HTTPException(401, "SOS access required")
+    return alert
 
 
 def commission_feature_enabled() -> None:
@@ -336,6 +377,29 @@ def referral_json(referral: Referral, include_case: bool = False) -> dict[str, A
             "evidence": [evidence_json(item) for item in case.evidence if bool(getattr(referral, "includes_evidence", False)) and (not getattr(referral, "evidence_refs", None) or item.id in referral.evidence_refs)],
         }
     return result
+
+
+def sos_json(alert: SOSAlert, include_location: bool = True, include_audit: bool = False) -> dict[str, Any]:
+    result = {
+        "id": alert.id, "case_id": alert.case_id, "note": alert.note, "status": alert.status,
+        "location_sharing_enabled": bool(alert.location_sharing_enabled), "location_status": alert.location_status, "location_source": alert.location_source,
+        "assigned_ngo_id": alert.assigned_ngo_id,
+        "assigned_ngo_name": alert.assigned_ngo.name if alert.assigned_ngo else None,
+        "police_escalation_status": alert.police_escalation_status,
+        "acknowledged_at": alert.acknowledged_at.isoformat() if alert.acknowledged_at else None,
+        "resolved_at": alert.resolved_at.isoformat() if alert.resolved_at else None,
+        "created_at": alert.created_at.isoformat() if alert.created_at else None,
+        "updated_at": alert.updated_at.isoformat() if alert.updated_at else None,
+    }
+    if include_location:
+        result |= {"latitude": alert.latitude, "longitude": alert.longitude, "accuracy": alert.accuracy, "captured_at": alert.captured_at.isoformat() if alert.captured_at else None}
+    if include_audit:
+        result["audit"] = [{"id": item.id, "actor_id": item.actor_id, "action": item.action, "from_status": item.from_status, "to_status": item.to_status, "note": item.note, "created_at": item.created_at.isoformat() if item.created_at else None} for item in alert.audit_log]
+    return result
+
+
+def audit_sos(session: Session, alert: SOSAlert, actor_id: str, action: str, from_status: str | None = None, to_status: str | None = None, note: str | None = None) -> None:
+    session.add(SOSAuditLog(sos_id=alert.id, actor_id=actor_id, action=action, from_status=from_status, to_status=to_status, note=note))
 
 
 def audit_referral(session: Session, referral: Referral, actor_id: str, action: str, from_status: str | None, note: str | None = None) -> None:
@@ -506,10 +570,8 @@ async def create_case(request: Request, payload: CaseCreate, session: Session = 
 
 
 @app.post("/api/cases/{identifier}/analyze")
-async def retry_case_analysis(identifier: str, session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service)) -> dict[str, Any]:
-    case = session.get(Case, identifier.upper())
-    if not case:
-        raise HTTPException(404, "Case not found")
+async def retry_case_analysis(request: Request, identifier: str, session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service)) -> dict[str, Any]:
+    case = require_survivor_case(request, identifier, session)
     case.analysis_status = "pending"
     session.commit()
     try:
@@ -542,10 +604,8 @@ def get_case(request: Request, identifier: str, session: Session = Depends(get_d
 
 
 @app.post("/api/cases/{identifier}/clarify")
-async def clarify(identifier: str, payload: ClarifyRequest, session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service)):
-    case = session.get(Case, identifier.upper())
-    if not case:
-        raise HTTPException(404, "Case not found")
+async def clarify(identifier: str, payload: ClarifyRequest, request: Request, session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service)):
+    case = require_survivor_case(request, identifier, session)
     qa = list(case.clarifying_qa or [])
     if len(qa) >= len(INTAKE_QUESTIONS):
         raise HTTPException(409, "The five-question intake is complete")
@@ -574,9 +634,7 @@ async def clarify(identifier: str, payload: ClarifyRequest, session: Session = D
 @app.post("/api/cases/{identifier}/evidence")
 @limiter.limit("30/hour")
 async def upload_evidence(request: Request, identifier: str, file: UploadFile = File(...), description: str = Form(default=""), incident_date: date | None = Form(default=None), session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service), storage: ObjectStorage = Depends(storage_service), regenerate_timeline: bool = Query(default=True)) -> dict[str, Any]:
-    case = session.get(Case, identifier.upper())
-    if not case:
-        raise HTTPException(404, "Case not found")
+    case = require_survivor_case(request, identifier, session)
     if not file.content_type or file.content_type not in ALLOWED_EVIDENCE_TYPES:
         raise HTTPException(415, "Unsupported evidence type")
     content = await file.read()
@@ -628,18 +686,15 @@ async def regenerate_timeline_for_case(case: Case, session: Session, service: Op
 @app.post("/api/cases/{identifier}/timeline")
 @limiter.limit("30/hour")
 async def regenerate_timeline(request: Request, identifier: str, session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service)) -> dict[str, Any]:
-    case = session.get(Case, identifier.upper())
-    if not case:
-        raise HTTPException(404, "Case not found")
+    case = require_survivor_case(request, identifier, session)
     return await regenerate_timeline_for_case(case, session, service)
 
 
 def require_survivor_case(request: Request, identifier: str, session: Session) -> Case:
-    authorization = request.headers.get("authorization")
-    if not authorization:
-        if not session.get(Case, identifier.upper()):
-            raise HTTPException(404, "Evidence not found")
-        raise HTTPException(401, "Authentication required")
+    return require_survivor_case_from_values(identifier, request.headers.get("authorization"), session)
+
+
+def require_survivor_case_from_values(identifier: str, authorization: str | None, session: Session) -> Case:
     token = bearer_token(authorization)
     record = session.get(CaseSession, token)
     if not record or not record.is_active or record.expires_at <= now() or record.case_id != identifier.upper():
@@ -676,10 +731,8 @@ def evidence_url(request: Request, identifier: str, evidence_id: int, session: S
 
 
 @app.patch("/api/cases/{identifier}/status")
-def update_status(identifier: str, payload: StatusUpdate, session: Session = Depends(get_db)) -> dict[str, str]:
-    case = session.get(Case, identifier.upper())
-    if not case:
-        raise HTTPException(404, "Case not found")
+def update_status(request: Request, identifier: str, payload: StatusUpdate, session: Session = Depends(get_db)) -> dict[str, str]:
+    case = require_survivor_case(request, identifier, session)
     case.status = payload.status
     case.updated_at = now()
     session.commit()
@@ -854,7 +907,57 @@ def admin_overview(session: Session = Depends(get_db)) -> dict[str, Any]:
     crowdfunding_pending = session.scalar(select(func.count(CrowdfundingRequest.id)).where(CrowdfundingRequest.status == "pending_review")) or 0
     month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     donations = session.scalars(select(PlatformDonation).where(PlatformDonation.payment_status == "completed", PlatformDonation.created_at >= month_start)).all()
-    return {"open_cases": sum(1 for item in cases if item.status != "resolved"), "urgent_unassigned": sum(1 for item in cases if (item.emergency_requested or item.severity == "urgent") and not any(ref.case_id == item.case_id and ref.status in {"forwarded", "acknowledged"} for ref in referrals)), "pending_ngo_applications": int(ngos_pending), "pending_crowdfunding_requests": int(crowdfunding_pending), "pending_referrals": sum(1 for item in referrals if item.status in {"requested", "admin_review"}), "donations_this_month": str(sum((item.amount for item in donations), Decimal("0"))), "recent_activity": [{"case_id": item.case_id, "status": item.status, "updated_at": item.updated_at.isoformat() if item.updated_at else None} for item in sorted(cases, key=lambda value: value.updated_at or value.created_at, reverse=True)[:8]]}
+    active_sos = session.scalars(select(SOSAlert).where(SOSAlert.status.notin_(["resolved", "cancelled"]))).all()
+    return {"open_cases": sum(1 for item in cases if item.status != "resolved"), "urgent_unassigned": sum(1 for item in cases if (item.emergency_requested or item.severity == "urgent") and not any(ref.case_id == item.case_id and ref.status in {"forwarded", "acknowledged"} for ref in referrals)), "active_sos": len(active_sos), "unacknowledged_sos": sum(1 for item in active_sos if item.status == "triggered"), "pending_ngo_applications": int(ngos_pending), "pending_crowdfunding_requests": int(crowdfunding_pending), "pending_referrals": sum(1 for item in referrals if item.status in {"requested", "admin_review"}), "donations_this_month": str(sum((item.amount for item in donations), Decimal("0"))), "recent_activity": [{"case_id": item.case_id, "status": item.status, "updated_at": item.updated_at.isoformat() if item.updated_at else None} for item in sorted(cases, key=lambda value: value.updated_at or value.created_at, reverse=True)[:8]]}
+
+
+@app.get("/api/admin/sos", dependencies=[Depends(require_admin)])
+def list_admin_sos(session: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    alerts = session.scalars(select(SOSAlert).order_by(SOSAlert.status.in_(["triggered", "acknowledged"]).desc(), SOSAlert.created_at.desc())).all()
+    return [sos_json(item, include_audit=True) for item in alerts]
+
+
+@app.post("/api/admin/sos/{identifier}/assign", dependencies=[Depends(require_admin)])
+def assign_sos(identifier: str, payload: SOSAssignment, session: Session = Depends(get_db)) -> dict[str, Any]:
+    alert, organization = session.get(SOSAlert, identifier), session.get(Organization, payload.ngo_id)
+    if not alert or not organization or organization.verification_status != "approved":
+        raise HTTPException(404, "SOS or verified NGO not found")
+    if alert.status in {"resolved", "cancelled"}:
+        raise HTTPException(409, "SOS is already closed")
+    previous = alert.status
+    alert.assigned_ngo_id, alert.status, alert.updated_at = organization.id, "assigned", now()
+    audit_sos(session, alert, "admin", "assigned_ngo", previous, alert.status, payload.note)
+    session.commit()
+    return sos_json(alert, include_audit=True)
+
+
+@app.patch("/api/admin/sos/{identifier}/status", dependencies=[Depends(require_admin)])
+def admin_update_sos_status(identifier: str, payload: SOSStatusUpdate, session: Session = Depends(get_db)) -> dict[str, Any]:
+    alert = session.get(SOSAlert, identifier)
+    if not alert:
+        raise HTTPException(404, "SOS not found")
+    if alert.status in {"resolved", "cancelled"}:
+        raise HTTPException(409, "SOS is already closed")
+    previous = alert.status
+    alert.status, alert.updated_at = payload.status, now()
+    if payload.status == "acknowledged" and not alert.acknowledged_at:
+        alert.acknowledged_at = now()
+    if payload.status in {"resolved", "cancelled"}:
+        alert.resolved_at = now()
+    audit_sos(session, alert, "admin", "status_updated", previous, alert.status, payload.note)
+    session.commit()
+    return sos_json(alert, include_audit=True)
+
+
+@app.post("/api/admin/sos/{identifier}/police-escalation", dependencies=[Depends(require_admin)])
+def escalate_sos_to_police(identifier: str, payload: SOSPoliceEscalation, session: Session = Depends(get_db)) -> dict[str, Any]:
+    alert = session.get(SOSAlert, identifier)
+    if not alert:
+        raise HTTPException(404, "SOS not found")
+    alert.police_escalation_status, alert.updated_at = payload.status, now()
+    audit_sos(session, alert, "admin", "police_escalation_updated", note=payload.note)
+    session.commit()
+    return sos_json(alert, include_audit=True)
 
 
 @app.get("/api/admin/cases", dependencies=[Depends(require_admin)])
@@ -897,6 +1000,60 @@ def admin_update_case_status(identifier: str, payload: StatusUpdate, session: Se
     case.updated_at = now()
     session.commit()
     return {"case_id": case.case_id, "status": case.status}
+
+
+@app.post("/api/sos")
+@limiter.limit("10/minute")
+def create_sos(request: Request, payload: SOSCreate, session: Session = Depends(get_db)) -> dict[str, Any]:
+    """Create an SOS without requiring an account; location is optional and consent-led."""
+    case = session.get(Case, payload.case_id.upper()) if payload.case_id else None
+    if payload.case_id and not case:
+        raise HTTPException(404, "Case not found")
+    has_location = payload.latitude is not None and payload.longitude is not None
+    logger.info("SOS request received case_id=%s location_status=%s coordinates_present=%s source=%s", payload.case_id, payload.location_status, has_location, payload.location_source)
+    if (payload.latitude is None) != (payload.longitude is None):
+        raise HTTPException(422, "Latitude and longitude must be provided together")
+    if has_location and payload.location_status != "captured":
+        raise HTTPException(422, "Location status must be captured when coordinates are present")
+    if not has_location and payload.location_status == "captured":
+        raise HTTPException(422, "Captured location status requires coordinates")
+    raw_token = secrets.token_urlsafe(32)
+    alert = SOSAlert(id=str(uuid.uuid4()), case_id=case.case_id if case else None, note=payload.note.strip() if payload.note else None, latitude=payload.latitude if has_location else None, longitude=payload.longitude if has_location else None, accuracy=payload.accuracy if has_location else None, captured_at=(payload.captured_at or now()) if has_location else None, location_status=payload.location_status, location_source=payload.location_source if has_location else "unknown", location_sharing_enabled=has_location, access_token_hash=token_hash(raw_token), status="triggered", police_escalation_status="not_requested")
+    session.add(alert)
+    audit_sos(session, alert, "survivor", "triggered", to_status="triggered", note="SOS created")
+    session.commit()
+    session.refresh(alert)
+    logger.info("SOS saved id=%s location_status=%s coordinates_saved=%s", alert.id, alert.location_status, has_location)
+    return sos_json(alert) | {"access_token": raw_token}
+
+
+@app.get("/api/sos/{identifier}")
+def get_sos(identifier: str, alert: SOSAlert = Depends(current_sos_owner)) -> dict[str, Any]:
+    return sos_json(alert)
+
+
+@app.patch("/api/sos/{identifier}/location")
+def update_sos_location(identifier: str, payload: SOSLocationUpdate, alert: SOSAlert = Depends(current_sos_owner), session: Session = Depends(get_db)) -> dict[str, Any]:
+    alert.latitude, alert.longitude = payload.latitude, payload.longitude
+    alert.accuracy, alert.captured_at = payload.accuracy, payload.captured_at or now()
+    alert.location_status, alert.location_source = "captured", payload.location_source
+    alert.location_sharing_enabled, alert.updated_at = True, now()
+    audit_sos(session, alert, "survivor", "location_updated", note="Location shared by survivor")
+    session.commit()
+    return sos_json(alert)
+
+
+@app.patch("/api/sos/{identifier}/status")
+def cancel_sos(identifier: str, payload: SOSStatusUpdate, alert: SOSAlert = Depends(current_sos_owner), session: Session = Depends(get_db)) -> dict[str, Any]:
+    if payload.status != "cancelled":
+        raise HTTPException(403, "Survivors can only cancel their own SOS")
+    if alert.status in {"resolved", "cancelled"}:
+        raise HTTPException(409, "SOS is already closed")
+    previous = alert.status
+    alert.status, alert.updated_at = "cancelled", now()
+    audit_sos(session, alert, "survivor", "cancelled", previous, alert.status, payload.note)
+    session.commit()
+    return sos_json(alert)
 
 
 @app.get("/api/admin/ngo-activity", dependencies=[Depends(require_admin)])
@@ -997,7 +1154,34 @@ def ngo_dashboard(account: NGOAccount = Depends(current_ngo), session: Session =
     response_hours = [max(0.0, (item.updated_at - item.created_at).total_seconds() / 3600) for item in matched_cases if item.created_at and item.updated_at]
     commissions = session.scalars(select(CommissionRecord).where(CommissionRecord.ngo_id == account.ngo_id).order_by(CommissionRecord.created_at.desc())).all()
     metrics = {"matched_cases": total, "category_breakdown": {key: count for key, count in categories}, "district_breakdown": {key: count for key, count in districts}, "average_response_time_hours": round(sum(response_hours) / len(response_hours), 2) if response_hours else None} if account.subscription_tier == "paid" else None
-    return {"ngo_id": account.ngo_id, "organization": organization_json(account.organization), "subscription_tier": account.subscription_tier, "billing_status": account.billing_status, "metrics": metrics, "emergency_count": sum(1 for item in referrals if getattr(item.case, "emergency_requested", False) or item.case.severity == "urgent"), "referrals": [referral_json(item) for item in referrals], "commissions": [commission_json(item) for item in commissions]}
+    sos_count = session.scalar(select(func.count(SOSAlert.id)).where(SOSAlert.assigned_ngo_id == account.ngo_id, SOSAlert.status.notin_(["resolved", "cancelled"]))) or 0
+    return {"ngo_id": account.ngo_id, "organization": organization_json(account.organization), "subscription_tier": account.subscription_tier, "billing_status": account.billing_status, "metrics": metrics, "emergency_count": sum(1 for item in referrals if getattr(item.case, "emergency_requested", False) or item.case.severity == "urgent"), "active_sos_count": int(sos_count), "referrals": [referral_json(item) for item in referrals], "commissions": [commission_json(item) for item in commissions]}
+
+
+@app.get("/api/ngo/sos")
+def list_ngo_sos(account: NGOAccount = Depends(current_ngo), session: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    alerts = session.scalars(select(SOSAlert).where(SOSAlert.assigned_ngo_id == account.ngo_id).order_by(SOSAlert.created_at.desc())).all()
+    return [sos_json(item, include_audit=True) for item in alerts]
+
+
+@app.patch("/api/ngo/sos/{identifier}/status")
+def ngo_update_sos_status(identifier: str, payload: SOSStatusUpdate, account: NGOAccount = Depends(current_ngo), session: Session = Depends(get_db)) -> dict[str, Any]:
+    alert = session.scalar(select(SOSAlert).where(SOSAlert.id == identifier, SOSAlert.assigned_ngo_id == account.ngo_id))
+    if not alert:
+        raise HTTPException(404, "Assigned SOS not found")
+    if alert.status in {"resolved", "cancelled"}:
+        raise HTTPException(409, "SOS is already closed")
+    if payload.status not in {"acknowledged", "responder_en_route", "survivor_contacted", "resolved"}:
+        raise HTTPException(403, "NGO cannot set that SOS status")
+    previous = alert.status
+    alert.status, alert.updated_at = payload.status, now()
+    if payload.status == "acknowledged" and not alert.acknowledged_at:
+        alert.acknowledged_at = now()
+    if payload.status == "resolved":
+        alert.resolved_at = now()
+    audit_sos(session, alert, f"ngo:{account.ngo_id}", "status_updated", previous, alert.status, payload.note)
+    session.commit()
+    return sos_json(alert, include_audit=True)
 
 
 @app.get("/api/ngo/profile")

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, create_engine, func
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, create_engine, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
@@ -30,6 +30,50 @@ class Case(Base):
     evidence: Mapped[list["Evidence"]] = relationship(back_populates="case", cascade="all, delete-orphan")
     matches: Mapped[list["CaseMatch"]] = relationship(back_populates="case", cascade="all, delete-orphan")
     referrals: Mapped[list["Referral"]] = relationship(back_populates="case", cascade="all, delete-orphan")
+    sos_alerts: Mapped[list["SOSAlert"]] = relationship(back_populates="case")
+
+
+class SOSAlert(Base):
+    __tablename__ = "sos_alerts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    case_id: Mapped[str | None] = mapped_column(ForeignKey("cases.case_id", ondelete="SET NULL"), nullable=True, index=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    location_status: Mapped[str] = mapped_column(String(40), default="not_requested", nullable=False, index=True)
+    location_source: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
+    location_sharing_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    access_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="triggered", nullable=False, index=True)
+    assigned_ngo_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True)
+    police_escalation_status: Mapped[str] = mapped_column(String(30), default="not_requested", nullable=False, index=True)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    case: Mapped[Case | None] = relationship(back_populates="sos_alerts")
+    assigned_ngo: Mapped["Organization | None"] = relationship()
+    audit_log: Mapped[list["SOSAuditLog"]] = relationship(back_populates="alert", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        CheckConstraint("status IN ('triggered', 'acknowledged', 'assigned', 'responder_en_route', 'survivor_contacted', 'resolved', 'cancelled')", name="ck_sos_alerts_status"),
+        CheckConstraint("police_escalation_status IN ('not_requested', 'review_requested', 'contacted', 'not_needed')", name="ck_sos_alerts_police_escalation_status"),
+    )
+
+
+class SOSAuditLog(Base):
+    __tablename__ = "sos_audit_log"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sos_id: Mapped[str] = mapped_column(ForeignKey("sos_alerts.id", ondelete="CASCADE"), index=True)
+    actor_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+    from_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    to_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    alert: Mapped[SOSAlert] = relationship(back_populates="audit_log")
 
 
 class Evidence(Base):
