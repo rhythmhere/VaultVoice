@@ -44,3 +44,5 @@ Evidence uses multipart `POST /api/cases/{id}/evidence` and authenticated decryp
 ## Verification
 
 Run `flutter analyze` and `flutter test`. Backend verification from the repository root is `$env:PYTHONPATH='.'; pytest -q`.
+
+Manual SOS location check: on a fresh Android install with location permission unset, open SOS and tap `Use my current location`; verify the OS permission prompt appears, grant it, confirm `Location ready to share`, and send the SOS with coordinates. Repeat with device location services disabled, permission denied, and a slow/no-fix emulator to verify SOS remains sendable without location.
