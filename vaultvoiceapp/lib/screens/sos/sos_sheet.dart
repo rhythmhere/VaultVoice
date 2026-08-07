@@ -13,7 +13,10 @@ Future<void> showSosSheet(BuildContext context, SecureStore store) =>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppTheme.bg,
+      useSafeArea: true,
+      barrierColor: AppTheme.vvTextPrimary.withAlpha(0x52),
+      backgroundColor: AppTheme.vvSurface,
+      showDragHandle: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(
           top: Radius.circular(AppTheme.radius),
@@ -138,64 +141,102 @@ class _SosSheetState extends State<SosSheet> {
   }
 
   @override
-  Widget build(BuildContext context) => SafeArea(
-    child: Padding(
-      padding: EdgeInsets.only(
-        left: 20,
-        right: 20,
-        top: 12,
-        bottom: MediaQuery.viewInsetsOf(context).bottom + 20,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Text(
-                'Emergency support',
-                style: Theme.of(context).textTheme.titleLarge,
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.only(
+      left: AppTheme.space24,
+      right: AppTheme.space24,
+      bottom: MediaQuery.viewInsetsOf(context).bottom + AppTheme.space24,
+    ),
+    child: SingleChildScrollView(
+      child: Padding(
+        padding: EdgeInsets.only(top: AppTheme.space12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(AppTheme.space16),
+              decoration: BoxDecoration(
+                color: AppTheme.vvUrgentContainer,
+                borderRadius: BorderRadius.circular(AppTheme.radius),
               ),
-              const Spacer(),
-              IconButton(
-                onPressed: () => QuickExit.run(context, widget.store),
-                icon: const Icon(Icons.exit_to_app),
-                tooltip: 'Quick Exit',
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.sos,
+                    color: AppTheme.vvUrgentPressed,
+                    size: 28,
+                  ),
+                  const SizedBox(width: AppTheme.space12),
+                  Expanded(
+                    child: Text(
+                      'Emergency support',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: AppTheme.vvUrgentPressed,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => QuickExit.run(context, widget.store),
+                    icon: const Icon(Icons.exit_to_app),
+                    tooltip: 'Quick Exit',
+                  ),
+                ],
               ),
-            ],
-          ),
-          const Text(
-            'This app does not contact emergency services automatically.',
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: () => launchUrl(Uri.parse('tel:100')),
-            icon: const Icon(Icons.phone),
-            label: const Text('Call Nepal Police - 100'),
-          ),
-          OutlinedButton.icon(
-            onPressed: () => launchUrl(Uri.parse('tel:1145')),
-            icon: const Icon(Icons.phone),
-            label: const Text('Call Khabar Garaun / NWC - 1145'),
-          ),
-          TextField(
-            controller: note,
-            maxLines: 2,
-            decoration: const InputDecoration(labelText: 'Optional short note'),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: locate,
-            icon: const Icon(Icons.location_on_outlined),
-            label: Text(location),
-          ),
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            onPressed: sending ? null : send,
-            icon: const Icon(Icons.sos),
-            label: Text(sending ? 'Sending...' : 'Send SOS now'),
-          ),
-        ],
+            ),
+            const SizedBox(height: AppTheme.space12),
+            Text(
+              'This app does not contact emergency services automatically. Review what will be shared before sending.',
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            const SizedBox(height: AppTheme.space16),
+            OutlinedButton.icon(
+              onPressed: () => launchUrl(Uri.parse('tel:100')),
+              icon: const Icon(Icons.phone),
+              label: const Text('Call Nepal Police - 100'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => launchUrl(Uri.parse('tel:1145')),
+              icon: const Icon(Icons.phone),
+              label: const Text('Call Khabar Garaun / NWC - 1145'),
+            ),
+            TextField(
+              controller: note,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Optional short note',
+              ),
+            ),
+            const SizedBox(height: AppTheme.space12),
+            OutlinedButton.icon(
+              onPressed: locate,
+              icon: const Icon(Icons.location_on_outlined),
+              label: Text(location),
+            ),
+            const SizedBox(height: AppTheme.space12),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.vvUrgent,
+                foregroundColor: AppTheme.vvWhite,
+                disabledBackgroundColor: AppTheme.vvUrgent.withAlpha(0x80),
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.all(
+                    Radius.circular(AppTheme.radius),
+                  ),
+                ),
+              ),
+              onPressed: sending ? null : send,
+              icon: const Icon(Icons.sos),
+              label: Text(sending ? 'Sending...' : 'Send SOS now'),
+            ),
+            const SizedBox(height: AppTheme.space8),
+            TextButton(
+              onPressed: sending ? null : () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+          ],
+        ),
       ),
     ),
   );

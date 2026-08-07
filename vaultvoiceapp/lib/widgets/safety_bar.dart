@@ -23,7 +23,7 @@ class SafetyBar extends StatelessWidget {
         message: 'Emergency support',
         child: IconButton(
           onPressed: () => showSosSheet(context, store),
-          icon: const Icon(Icons.sos, color: AppTheme.danger),
+          icon: const Icon(Icons.sos, color: AppTheme.vvUrgent),
           tooltip: 'SOS',
         ),
       ),

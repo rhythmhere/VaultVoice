@@ -64,7 +64,12 @@ class Frame extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 680),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 22, 20, 50),
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space20,
+              AppTheme.space16,
+              AppTheme.space20,
+              AppTheme.space48,
+            ),
             child: child,
           ),
         ),
@@ -72,6 +77,55 @@ class Frame extends StatelessWidget {
     ),
   );
 }
+
+class EmptyState extends StatelessWidget {
+  const EmptyState({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.action,
+  });
+  final IconData icon;
+  final String title;
+  final String message;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: AppTheme.space32),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 24, color: AppTheme.vvTextSecondary),
+        const SizedBox(height: AppTheme.space12),
+        Text(title, style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: AppTheme.space8),
+        Text(
+          message,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+        if (action != null) ...[
+          const SizedBox(height: AppTheme.space16),
+          action!,
+        ],
+      ],
+    ),
+  );
+}
+
+List<Widget> loadingRows() => List.generate(
+  3,
+  (_) => Container(
+    height: 56,
+    margin: const EdgeInsets.only(bottom: AppTheme.space8),
+    decoration: BoxDecoration(
+      color: AppTheme.vvSurfaceMuted,
+      borderRadius: BorderRadius.circular(AppTheme.space4),
+    ),
+  ),
+);
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -83,22 +137,22 @@ class HomeScreen extends StatelessWidget {
       title: 'VaultVoice',
       child: ListView(
         children: [
-          const SizedBox(height: 28),
+          const SizedBox(height: AppTheme.space32),
           Text(
             'Your story, in your own time.',
             style: Theme.of(context).textTheme.headlineMedium,
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppTheme.space12),
           const Text(
             'Understand what happened, organize what you remember, and explore your options without creating an account or sharing your identity.',
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: AppTheme.space32),
           FilledButton.icon(
             onPressed: () => Navigator.pushNamed(context, '/report'),
             icon: const Icon(Icons.edit_document),
             label: const Text('Get support'),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppTheme.space12),
           OutlinedButton.icon(
             onPressed: () => Navigator.pushNamed(context, '/recover'),
             icon: const Icon(Icons.lock_open_outlined),
@@ -107,12 +161,12 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 32),
           Card(
             child: Padding(
-              padding: const EdgeInsets.all(18),
+              padding: const EdgeInsets.all(AppTheme.space16),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.shield_outlined, color: AppTheme.primary),
-                  const SizedBox(width: 12),
+                  const Icon(Icons.shield_outlined, color: AppTheme.vvPrimary),
+                  const SizedBox(width: AppTheme.space12),
                   const Expanded(
                     child: Text(
                       'No account needed. Your case stays private, and you can write in English or Nepali.',
@@ -122,7 +176,7 @@ class HomeScreen extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppTheme.space12),
           const Text(
             'For immediate danger, call Nepal Police on 100 or Khabar Garaun / NWC on 1145. This app is not an emergency response service.',
           ),
@@ -162,7 +216,7 @@ class _ReportState extends State<ReportScreen> {
             'You can take this one step at a time.',
             style: Theme.of(context).textTheme.headlineSmall,
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: AppTheme.space20),
           DropdownButtonFormField<String>(
             initialValue: category,
             items: const [
@@ -177,12 +231,12 @@ class _ReportState extends State<ReportScreen> {
               labelText: 'What kind of support do you need?',
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: AppTheme.space16),
           TextField(
             controller: district,
             decoration: const InputDecoration(labelText: 'District'),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: AppTheme.space16),
           TextField(
             controller: report,
             maxLines: 7,
@@ -199,7 +253,7 @@ class _ReportState extends State<ReportScreen> {
             value: danger,
             onChanged: (x) => setState(() => danger = x),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppTheme.space12),
           FilledButton(
             onPressed: busy
                 ? null
@@ -284,17 +338,17 @@ class _RecoveryState extends State<RecoveryScreen> {
             'Use your Case ID',
             style: Theme.of(context).textTheme.headlineSmall,
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppTheme.space8),
           const Text(
             'Your Case ID is the recovery key. It is not a password, so keep it private.',
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: AppTheme.space20),
           TextField(
             controller: id,
             textCapitalization: TextCapitalization.characters,
             decoration: const InputDecoration(labelText: 'VV-XXXXXXXX'),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: AppTheme.space16),
           FilledButton(
             onPressed: busy
                 ? null
@@ -435,7 +489,7 @@ class _ClarificationState extends State<ClarificationScreen> {
             ...caseModel.clarifyingQa.map(
               (item) => Card(
                 child: Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(AppTheme.space12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -443,7 +497,9 @@ class _ClarificationState extends State<ClarificationScreen> {
                       const SizedBox(height: 6),
                       Text(
                         item['answer']?.toString() ?? '',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ],
                   ),
@@ -548,13 +604,13 @@ class _SupportPlanState extends State<SupportPlanScreen> {
           ),
           Card(
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(AppTheme.space16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'Plain-language guidance',
-                    style: TextStyle(fontWeight: FontWeight.w700),
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 8),
                   Text(caseModel.summary ?? 'Your guidance is being prepared.'),
@@ -573,9 +629,11 @@ class _SupportPlanState extends State<SupportPlanScreen> {
           ),
           if (unavailable) ...[
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Your report and answers are saved. Analysis is temporarily unavailable.',
-              style: TextStyle(color: AppTheme.danger),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: AppTheme.vvError),
             ),
             OutlinedButton.icon(
               onPressed: retrying ? null : _retry,
@@ -615,19 +673,19 @@ class CaseScreen extends StatelessWidget {
     title: 'My support space',
     child: ListView(
       children: [
-        const StatusBadge('approved'),
+        StatusBadge(caseModel.status ?? 'open', domain: 'case'),
         const SizedBox(height: 14),
         Text('Your case', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 12),
         Card(
           child: Padding(
-            padding: const EdgeInsets.all(18),
+            padding: const EdgeInsets.all(AppTheme.space16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   caseModel.id,
-                  style: const TextStyle(
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                     letterSpacing: 1.2,
                   ),
@@ -692,7 +750,7 @@ class CaseScreen extends StatelessWidget {
         const SizedBox(height: 8),
         OutlinedButton.icon(
           onPressed: () => showSosSheet(context, store),
-          icon: const Icon(Icons.sos, color: AppTheme.danger),
+          icon: const Icon(Icons.sos, color: AppTheme.vvUrgent),
           label: const Text('Emergency support'),
         ),
       ],
@@ -852,14 +910,14 @@ class _CrowdfundingScreenState extends State<CrowdfundingScreen> {
 
   Widget _requestCard(Map<String, dynamic> request) => Card(
     child: Padding(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(AppTheme.space16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               const Expanded(child: Text('Request status')),
-              Chip(label: Text(_label(request['status']))),
+              StatusBadge(request['status'], domain: 'referral'),
             ],
           ),
           const SizedBox(height: 10),
@@ -880,14 +938,14 @@ class _CrowdfundingScreenState extends State<CrowdfundingScreen> {
 
   Widget _campaignCard(Map<String, dynamic> campaign) => Card(
     child: Padding(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(AppTheme.space16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               const Expanded(child: Text('Your campaign is live')),
-              Chip(label: Text(_label(campaign['status']))),
+              StatusBadge(campaign['status'], domain: 'referral'),
             ],
           ),
           const SizedBox(height: 10),
@@ -1033,8 +1091,6 @@ class _CrowdfundingScreenState extends State<CrowdfundingScreen> {
     SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
   );
 
-  String _label(Object? value) =>
-      (value?.toString() ?? 'pending').replaceAll('_', ' ');
 }
 
 class CaseToolsScreen extends StatelessWidget {
@@ -1232,10 +1288,10 @@ class _ChatState extends State<ChatScreen> {
         if (loading) const LinearProgressIndicator(),
         Expanded(
           child: items.isEmpty
-              ? const Center(
-                  child: Text(
-                    'Messages become available after a referral exists.',
-                  ),
+              ? const EmptyState(
+                  icon: Icons.forum_outlined,
+                  title: 'No messages yet',
+                  message: 'Messages become available after a referral exists.',
                 )
               : ListView.builder(
                   itemCount: items.length,
@@ -1244,14 +1300,14 @@ class _ChatState extends State<ChatScreen> {
                         ? Alignment.centerRight
                         : Alignment.centerLeft,
                     child: Container(
-                      margin: const EdgeInsets.all(6),
-                      padding: const EdgeInsets.all(12),
+                      margin: const EdgeInsets.all(AppTheme.space8),
+                      padding: const EdgeInsets.all(AppTheme.space12),
                       constraints: const BoxConstraints(maxWidth: 300),
                       decoration: BoxDecoration(
                         color: items[i]['sender_type'] == 'survivor'
-                            ? const Color(0xffdcebea)
-                            : Colors.white,
-                        borderRadius: BorderRadius.circular(6),
+                            ? AppTheme.vvPrimaryContainer
+                            : AppTheme.vvSurfaceMuted,
+                        borderRadius: BorderRadius.circular(AppTheme.radius),
                       ),
                       child: Text(items[i]['message'] ?? ''),
                     ),
@@ -1314,14 +1370,14 @@ class _EvidenceState extends State<EvidenceScreen> {
       children: [
         Card(
           child: Padding(
-            padding: const EdgeInsets.all(18),
+            padding: const EdgeInsets.all(AppTheme.space16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Icon(
                   Icons.cloud_upload_outlined,
                   size: 42,
-                  color: AppTheme.primary,
+                  color: AppTheme.vvPrimary,
                 ),
                 const SizedBox(height: 10),
                 const Text(
@@ -1377,13 +1433,29 @@ class _EvidenceState extends State<EvidenceScreen> {
           style: Theme.of(context).textTheme.titleLarge,
         ),
         const SizedBox(height: 8),
+        if (widget.caseModel.evidence.isEmpty)
+          const EmptyState(
+            icon: Icons.description_outlined,
+            title: 'No evidence added',
+            message:
+                'Add a private document, image, audio file, or note when you are ready.',
+          ),
         ...widget.caseModel.evidence.map<Widget>(
           (item) => Card(
             child: ListTile(
-              leading: const Icon(Icons.lock_outline, color: AppTheme.primary),
+              leading: const Icon(
+                Icons.lock_outline,
+                color: AppTheme.vvPrimary,
+              ),
               title: Text(item['name'] ?? 'Evidence'),
-              subtitle: Text(
-                '${item['type'] ?? ''}  ${item['size'] ?? ''} bytes',
+              subtitle: Wrap(
+                spacing: AppTheme.space8,
+                runSpacing: AppTheme.space4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text('${item['type'] ?? ''}  ${item['size'] ?? ''} bytes'),
+                  StatusBadge(item['status'] ?? 'uploaded', domain: 'evidence'),
+                ],
               ),
               trailing: IconButton(
                 onPressed: () async {
@@ -1453,14 +1525,28 @@ class _MatchesState extends State<MatchesScreen> {
     title: 'Support matches',
     child: ListView(
       children: [
-        if (!loaded) const LinearProgressIndicator(),
+        if (!loaded) ...[const LinearProgressIndicator(), ...loadingRows()],
+        if (loaded && matches.isEmpty)
+          EmptyState(
+            icon: Icons.people_outline,
+            title: 'No matches yet',
+            message: 'We could not find a support match right now.',
+            action: OutlinedButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Try again'),
+            ),
+          ),
         ...matches.map(
           (org) => Card(
             child: ListTile(
-              contentPadding: const EdgeInsets.all(16),
+              contentPadding: const EdgeInsets.all(AppTheme.space16),
               leading: const CircleAvatar(
-                backgroundColor: AppTheme.primaryPale,
-                child: Icon(Icons.handshake_outlined, color: AppTheme.primary),
+                backgroundColor: AppTheme.vvPrimaryContainer,
+                child: Icon(
+                  Icons.handshake_outlined,
+                  color: AppTheme.vvPrimary,
+                ),
               ),
               title: Text(org['name'] ?? 'Organization'),
               subtitle: Padding(
