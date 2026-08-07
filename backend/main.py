@@ -455,7 +455,9 @@ def has_valid_file_signature(content: bytes, content_type: str) -> bool:
 
 
 def serialize_case(session: Session, case: Case) -> dict[str, Any]:
-    return {"case_id": case.case_id, "category": case.category, "district": case.district, "initial_report": case.initial_report, "clarifying_qa": case.clarifying_qa or [], "ai_legal_summary": case.ai_legal_summary, "severity": case.severity, "emergency_requested": bool(case.emergency_requested), "priority": "emergency" if case.emergency_requested or case.severity == "urgent" else "standard", "analysis_status": case.analysis_status, "status": case.status, "created_at": case.created_at.isoformat() if case.created_at else None, "updated_at": case.updated_at.isoformat() if case.updated_at else None, "timeline": case.timeline or [], "evidence": [evidence_json(item) for item in case.evidence], "matches": match_case(session, case)}
+    requests = session.scalars(select(CrowdfundingRequest).where(CrowdfundingRequest.case_id == case.case_id).order_by(CrowdfundingRequest.created_at.asc())).all()
+    campaigns = session.scalars(select(CrowdfundingCampaign).where(CrowdfundingCampaign.case_id == case.case_id).order_by(CrowdfundingCampaign.created_at.desc())).all()
+    return {"case_id": case.case_id, "category": case.category, "district": case.district, "initial_report": case.initial_report, "clarifying_qa": case.clarifying_qa or [], "ai_legal_summary": case.ai_legal_summary, "severity": case.severity, "emergency_requested": bool(case.emergency_requested), "priority": "emergency" if case.emergency_requested or case.severity == "urgent" else "standard", "analysis_status": case.analysis_status, "status": case.status, "created_at": case.created_at.isoformat() if case.created_at else None, "updated_at": case.updated_at.isoformat() if case.updated_at else None, "timeline": case.timeline or [], "evidence": [evidence_json(item) for item in case.evidence], "matches": match_case(session, case), "crowdfunding_requests": [{"id": item.id, "category": item.category, "requested_amount": str(item.requested_amount), "target_date": item.target_date.isoformat() if item.target_date else None, "consent_public_display": bool(item.consent_public_display), "status": item.status, "explanation": item.explanation, "review_note": item.review_note} for item in requests], "crowdfunding_campaigns": [campaign_json(item) for item in campaigns]}
 
 
 def intake_questions(qa: list[dict[str, Any]]) -> list[str]:
@@ -1457,7 +1459,7 @@ def create_crowdfunding_request(identifier: str, payload: CrowdfundingCreate, ca
     request = CrowdfundingRequest(id=str(uuid.uuid4()), case_id=case.case_id, category=payload.category, explanation=payload.explanation.strip(), requested_amount=payload.requested_amount, target_date=payload.target_date, consent_public_display=payload.consent_public_display, status="pending_review")
     session.add(request)
     session.commit()
-    return {"id": request.id, "case_id": request.case_id, "status": request.status, "consent_public_display": request.consent_public_display}
+    return {"id": request.id, "case_id": request.case_id, "category": request.category, "requested_amount": str(request.requested_amount), "target_date": request.target_date.isoformat() if request.target_date else None, "status": request.status, "explanation": request.explanation, "consent_public_display": request.consent_public_display, "review_note": request.review_note}
 
 
 @app.get("/api/admin/crowdfunding-requests", dependencies=[Depends(require_admin)])

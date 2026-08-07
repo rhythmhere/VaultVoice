@@ -6,6 +6,7 @@ import 'core/theme/app_theme.dart';
 import 'core/storage/secure_store.dart';
 import 'core/network/dio_client.dart';
 import 'repositories/vault_repository.dart';
+import 'models/case_model.dart';
 import 'widgets/safety_bar.dart';
 import 'screens/sos/sos_sheet.dart';
 
@@ -95,13 +96,13 @@ class HomeScreen extends StatelessWidget {
           FilledButton.icon(
             onPressed: () => Navigator.pushNamed(context, '/report'),
             icon: const Icon(Icons.edit_document),
-            label: const Text('Report something'),
+            label: const Text('Get support'),
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: () => Navigator.pushNamed(context, '/recover'),
             icon: const Icon(Icons.lock_open_outlined),
-            label: const Text('Check existing case'),
+            label: const Text('Open my case'),
           ),
           const SizedBox(height: 32),
           Card(
@@ -386,6 +387,18 @@ class CaseScreen extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         OutlinedButton.icon(
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) =>
+                  CrowdfundingScreen(store: store, caseModel: caseModel),
+            ),
+          ),
+          icon: const Icon(Icons.volunteer_activism_outlined),
+          label: const Text('Request crowdfunding'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
           onPressed: () => showSosSheet(context, store),
           icon: const Icon(Icons.sos, color: AppTheme.danger),
           label: const Text('Emergency support'),
@@ -467,6 +480,269 @@ void showReferral(BuildContext context, SecureStore store, dynamic c) {
       ),
     ),
   );
+}
+
+class CrowdfundingScreen extends StatefulWidget {
+  const CrowdfundingScreen({
+    super.key,
+    required this.store,
+    required this.caseModel,
+  });
+  final SecureStore store;
+  final CaseModel caseModel;
+
+  @override
+  State<CrowdfundingScreen> createState() => _CrowdfundingScreenState();
+}
+
+class _CrowdfundingScreenState extends State<CrowdfundingScreen> {
+  late String caseStatus;
+  late List<Map<String, dynamic>> requests;
+  late List<Map<String, dynamic>> campaigns;
+  final amount = TextEditingController();
+  final explanation = TextEditingController();
+  String category = 'medical';
+  bool publicConsent = false;
+  bool busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    caseStatus = widget.caseModel.status ?? 'open';
+    requests = List<Map<String, dynamic>>.from(
+      widget.caseModel.crowdfundingRequests,
+    );
+    campaigns = List<Map<String, dynamic>>.from(
+      widget.caseModel.crowdfundingCampaigns,
+    );
+  }
+
+  @override
+  void dispose() {
+    amount.dispose();
+    explanation.dispose();
+    super.dispose();
+  }
+
+  bool get eligible =>
+      caseStatus == 'ngo_contacted' || caseStatus == 'resolved';
+
+  @override
+  Widget build(BuildContext context) {
+    final request = requests.isEmpty ? null : requests.last;
+    final campaign = campaigns.isEmpty ? null : campaigns.first;
+    return Frame(
+      store: widget.store,
+      title: 'Crowdfunding',
+      child: ListView(
+        children: [
+          Text(
+            'Community support',
+            style: Theme.of(context).textTheme.labelLarge,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Request crowdfunding',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Request an administrator review a fundraising campaign for costs related to your case.',
+          ),
+          const SizedBox(height: 18),
+          if (campaign != null) _campaignCard(campaign),
+          if (campaign == null && request != null) _requestCard(request),
+          if (campaign == null && request == null) _requestForm(),
+        ],
+      ),
+    );
+  }
+
+  Widget _requestCard(Map<String, dynamic> request) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(child: Text('Request status')),
+              Chip(label: Text(_label(request['status']))),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'NPR ${request['requested_amount'] ?? ''} · ${request['category'] ?? ''}',
+          ),
+          if ((request['review_note'] ?? '').toString().isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(request['review_note'].toString()),
+          ] else ...[
+            const SizedBox(height: 10),
+            const Text('An administrator is reviewing your request.'),
+          ],
+        ],
+      ),
+    ),
+  );
+
+  Widget _campaignCard(Map<String, dynamic> campaign) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(child: Text('Your campaign is live')),
+              Chip(label: Text(_label(campaign['status']))),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(campaign['description']?.toString() ?? ''),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Your approved campaign is available on the public crowdfunding page.',
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.open_in_new),
+            label: const Text('Campaign approved'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _requestForm() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      if (!eligible) ...[
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('Available after NGO contact'),
+            subtitle: const Text(
+              'An NGO or administrator must contact your case before you can request crowdfunding.',
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (caseStatus == 'open')
+          OutlinedButton.icon(
+            onPressed: busy ? null : _markNgoContacted,
+            icon: const Icon(Icons.handshake_outlined),
+            label: const Text('Mark NGO contacted'),
+          ),
+      ] else ...[
+        DropdownButtonFormField<String>(
+          initialValue: category,
+          decoration: const InputDecoration(labelText: 'Need category'),
+          items: const [
+            DropdownMenuItem(value: 'medical', child: Text('Medical')),
+            DropdownMenuItem(value: 'legal', child: Text('Legal')),
+            DropdownMenuItem(value: 'shelter', child: Text('Shelter')),
+            DropdownMenuItem(value: 'education', child: Text('Education')),
+            DropdownMenuItem(value: 'relocation', child: Text('Relocation')),
+            DropdownMenuItem(value: 'other', child: Text('Other')),
+          ],
+          onChanged: busy
+              ? null
+              : (value) => setState(() => category = value ?? category),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: amount,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(labelText: 'Amount in NPR'),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: explanation,
+          minLines: 4,
+          maxLines: 7,
+          decoration: const InputDecoration(
+            labelText: 'Why is funding needed?',
+          ),
+        ),
+        CheckboxListTile(
+          contentPadding: EdgeInsets.zero,
+          value: publicConsent,
+          onChanged: busy
+              ? null
+              : (value) => setState(() => publicConsent = value ?? false),
+          title: const Text('Allow anonymous public display'),
+        ),
+        FilledButton.icon(
+          onPressed: busy ? null : _submit,
+          icon: const Icon(Icons.arrow_forward),
+          label: Text(busy ? 'Submitting...' : 'Submit request'),
+        ),
+      ],
+    ],
+  );
+
+  Future<void> _markNgoContacted() async {
+    setState(() => busy = true);
+    try {
+      await refRepo(widget.store).status(widget.caseModel.id, 'ngo_contacted');
+      if (mounted)
+        setState(() {
+          caseStatus = 'ngo_contacted';
+          busy = false;
+        });
+    } catch (error) {
+      if (mounted) {
+        setState(() => busy = false);
+        _showError(error);
+      }
+    }
+  }
+
+  Future<void> _submit() async {
+    final value = double.tryParse(amount.text.trim());
+    if (value == null || value <= 0 || explanation.text.trim().length < 10) {
+      _showError(
+        'Enter a valid amount and at least 10 characters explaining the need.',
+      );
+      return;
+    }
+    setState(() => busy = true);
+    try {
+      final result = await refRepo(widget.store)
+          .crowdfundingRequest(widget.caseModel.id, {
+            'category': category,
+            'requested_amount': value,
+            'explanation': explanation.text.trim(),
+            'consent_public_display': publicConsent,
+          });
+      if (!mounted) return;
+      setState(() {
+        requests.add(result);
+        busy = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Crowdfunding request submitted for admin review.'),
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(() => busy = false);
+        _showError(error);
+      }
+    }
+  }
+
+  void _showError(Object error) => ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+  );
+
+  String _label(Object? value) =>
+      (value?.toString() ?? 'pending').replaceAll('_', ' ');
 }
 
 class CaseToolsScreen extends StatelessWidget {

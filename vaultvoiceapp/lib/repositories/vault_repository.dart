@@ -119,6 +119,15 @@ class VaultRepository {
           data: {'status': value},
         )).data,
       );
+  Future<Map<String, dynamic>> crowdfundingRequest(
+    String id,
+    Map<String, dynamic> data,
+  ) async => Map<String, dynamic>.from(
+    (await client.dio.post(
+      '/api/cases/$id/crowdfunding-requests',
+      data: data,
+    )).data,
+  );
   Future<Map<String, dynamic>> timeline(String id) async =>
       Map<String, dynamic>.from(
         (await client.dio.post('/api/cases/$id/timeline')).data,
