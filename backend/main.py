@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import csv
 import io
@@ -10,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -238,6 +239,32 @@ def make_case_id(session: Session) -> str:
 
 def ai_service() -> OpenRouterAIService:
     return OpenRouterAIService(settings)
+
+
+async def complete_case_analysis(case_id: str, category: str, report: str, qa: list[dict[str, Any]], service: OpenRouterAIService) -> None:
+    """Run optional AI enrichment after the survivor-facing request is complete."""
+    try:
+        analysis = await service.analyze_report(category, report, qa)
+    except AIServiceError as exc:
+        logger.warning("Background case analysis failed case_id=%s error=%r", case_id, exc)
+        with SessionLocal() as session:
+            case = session.get(Case, case_id)
+            if case:
+                case.analysis_status = "failed"
+                session.commit()
+        return
+    with SessionLocal() as session:
+        case = session.get(Case, case_id)
+        if not case:
+            return
+        # A slower analysis for an older answer must not overwrite newer case data.
+        if list(case.clarifying_qa or []) != qa:
+            return
+        case.ai_legal_summary = analysis["legal_summary"]
+        case.severity = analysis["severity"]
+        case.analysis_status = "complete"
+        case.updated_at = now()
+        session.commit()
 
 
 def storage_service() -> ObjectStorage:
@@ -516,7 +543,7 @@ def login(request: Request, payload: AuthLogin, session: Session = Depends(get_d
     record = CaseSession(session_token=token, case_id=case.case_id, expires_at=now() + timedelta(hours=1), ip_address=payload.ip_address, user_agent=payload.user_agent, is_active=True)
     session.add(record)
     session.commit()
-    return {"session_token": token, "expires_at": record.expires_at.isoformat()}
+    return serialize_case(session, case) | {"session_token": token, "expires_at": record.expires_at.isoformat()}
 
 
 @app.post("/api/auth/logout")
@@ -542,7 +569,7 @@ async def analyze(request: Request, payload: AnalyzeRequest, service: OpenRouter
 
 @app.post("/api/cases")
 @limiter.limit("10/hour")
-async def create_case(request: Request, payload: CaseCreate, session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service)) -> dict[str, Any]:
+async def create_case(request: Request, payload: CaseCreate, session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service), background_tasks: BackgroundTasks = None) -> dict[str, Any]:
     case = Case(case_id=make_case_id(session), category=payload.category, district=payload.district, initial_report=payload.initial_report, clarifying_qa=payload.clarifying_qa, ai_legal_summary=None, severity=None, emergency_requested=payload.emergency_requested, analysis_status="pending", status="open", timeline=[])
     session.add(case)
     session.commit()
@@ -552,6 +579,15 @@ async def create_case(request: Request, payload: CaseCreate, session: Session = 
     case_session = CaseSession(session_token=session_token, case_id=case.case_id, expires_at=now() + timedelta(hours=1), ip_address=get_remote_address(request), user_agent=request.headers.get("user-agent"), is_active=True)
     session.add(case_session)
     session.commit()
+    # The HTTP path must never make case creation wait for an optional AI provider.
+    # Keep the synchronous branch for direct callers and legacy unit tests.
+    if background_tasks is not None:
+        asyncio.create_task(complete_case_analysis(case.case_id, payload.category, payload.initial_report, payload.clarifying_qa, service))
+        result = serialize_case(session, case)
+        result["clarifying_questions"] = intake_questions(case.clarifying_qa or [])
+        result["session_token"] = session_token
+        result["session_expires_at"] = case_session.expires_at.isoformat()
+        return result
     logger.info("OpenRouter call path=create_case case_id=%s qa_count=%d", case.case_id, len(payload.clarifying_qa))
     try:
         analysis = await service.analyze_report(payload.category, payload.initial_report, payload.clarifying_qa)
@@ -607,12 +643,20 @@ def get_case(request: Request, identifier: str, session: Session = Depends(get_d
 
 
 @app.post("/api/cases/{identifier}/clarify")
-async def clarify(identifier: str, payload: ClarifyRequest, session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service), request: Request = None):
+async def clarify(identifier: str, payload: ClarifyRequest, session: Session = Depends(get_db), service: OpenRouterAIService = Depends(ai_service), request: Request = None, background_tasks: BackgroundTasks = None):
     case = require_survivor_case(request, identifier, session)
     qa = list(case.clarifying_qa or [])
     if len(qa) >= len(INTAKE_QUESTIONS):
         raise HTTPException(409, "The five-question intake is complete")
     qa.append({"question": payload.question.strip(), "answer": payload.answer.strip(), "answered_at": now().isoformat()})
+    if background_tasks is not None:
+        case.clarifying_qa = qa
+        case.analysis_status = "pending"
+        case.updated_at = now()
+        session.commit()
+        if len(qa) == len(INTAKE_QUESTIONS):
+            asyncio.create_task(complete_case_analysis(case.case_id, case.category, case.initial_report, qa, service))
+        return {"message": "Your answer was saved.", "next_questions": intake_questions(qa), "clarifying_qa": qa, "ai_legal_summary": case.ai_legal_summary, "severity": case.severity, "analysis_status": case.analysis_status}
     cache_key = (case.case_id, payload.question.strip(), payload.answer.strip())
     analysis = case_analysis_cache.get(cache_key)
     if analysis is None:
@@ -1580,10 +1624,13 @@ def resolve_message_actor(identifier: str, authorization: str | None, x_ngo_toke
 
 def visible_case_messages(case_id: str, sender_type: str, sender_id: str, ngo_id: int | None, session: Session) -> list[CaseMessage]:
     query = select(CaseMessage).where(CaseMessage.case_id == case_id).order_by(CaseMessage.sent_at.asc(), CaseMessage.id.asc())
-    if sender_type == "admin":
-        return session.scalars(query).all()
-    query = query.where(CaseMessage.is_internal_note.is_(False))
+    # The direct survivor/admin thread is separate from every NGO thread.
+    # NGO messages carry ngo_id; direct messages deliberately do not.
+    if sender_type in {"admin", "survivor"}:
+        query = query.where(CaseMessage.ngo_id.is_(None))
+    query = query.where(CaseMessage.is_internal_note.is_(sender_type == "admin")) if sender_type == "survivor" else query
     if sender_type == "ngo":
+        query = query.where(CaseMessage.is_internal_note.is_(False))
         query = query.where((CaseMessage.sender_type != "ngo") | (CaseMessage.ngo_id == ngo_id))
     return session.scalars(query).all()
 

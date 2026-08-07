@@ -36,7 +36,8 @@ class VaultRepository {
     await store.write(SecureStore.caseId, id.trim().toUpperCase());
     await store.write(SecureStore.sessionToken, r.data['session_token']);
     await store.write(SecureStore.sessionExpiry, r.data['expires_at']);
-    return getCase(id);
+    // Login now returns the case snapshot, avoiding a second round trip.
+    return CaseModel.fromJson(r.data);
   }
 
   Future<CaseModel> getCase(String id) async => CaseModel.fromJson(
@@ -51,7 +52,13 @@ class VaultRepository {
     data: {'question': question, 'answer': answer},
   )).data;
   Future<CaseModel> retryAnalysis(String id) async => CaseModel.fromJson(
-    (await client.dio.post('/api/cases/$id/analyze')).data,
+    (await client.dio.post(
+      '/api/cases/$id/analyze',
+      options: Options(
+        extra: {'retrySafe': true},
+        receiveTimeout: const Duration(seconds: 90),
+      ),
+    )).data,
   );
   Future<void> _saveSession(Map<String, dynamic> j) async {
     await store.write(SecureStore.caseId, j['case_id']);
@@ -133,7 +140,13 @@ class VaultRepository {
   );
   Future<Map<String, dynamic>> timeline(String id) async =>
       Map<String, dynamic>.from(
-        (await client.dio.post('/api/cases/$id/timeline')).data,
+        (await client.dio.post(
+          '/api/cases/$id/timeline',
+          options: Options(
+            extra: {'retrySafe': true},
+            receiveTimeout: const Duration(seconds: 90),
+          ),
+        )).data,
       );
   Future<Map<String, dynamic>> uploadEvidence(
     String id,

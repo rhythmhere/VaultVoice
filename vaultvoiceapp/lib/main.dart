@@ -268,8 +268,17 @@ class _ReportState extends State<ReportScreen> {
                         emergency: danger,
                       );
                       if (context.mounted) showCaseCreated(context, store, c);
-                    } catch (_) {
-                      if (mounted) setState(() => busy = false);
+                    } catch (error) {
+                      if (mounted) {
+                        setState(() => busy = false);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Case could not be created: ${DioClient.userMessage(error)}',
+                            ),
+                          ),
+                        );
+                      }
                     }
                   },
             child: Text(busy ? 'Saving...' : 'Create my private case'),
@@ -359,8 +368,17 @@ class _RecoveryState extends State<RecoveryScreen> {
                       final c = await refRepo(store).login(id.text);
                       if (!mounted) return;
                       openRecoveredCase(navigator.context, store, c);
-                    } catch (_) {
-                      if (mounted) setState(() => busy = false);
+                    } catch (error) {
+                      if (mounted) {
+                        setState(() => busy = false);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Case could not be opened: ${DioClient.userMessage(error)}',
+                            ),
+                          ),
+                        );
+                      }
                     }
                   },
             child: Text(busy ? 'Opening...' : 'Open my case'),
@@ -458,7 +476,11 @@ class _ClarificationState extends State<ClarificationScreen> {
       if (mounted) {
         setState(() => busy = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Your answer could not be saved: $error')),
+          SnackBar(
+            content: Text(
+              'Your answer could not be saved: ${DioClient.userMessage(error)}',
+            ),
+          ),
         );
       }
     }
@@ -470,8 +492,8 @@ class _ClarificationState extends State<ClarificationScreen> {
     return Frame(
       store: widget.store,
       title: 'A few gentle questions',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         children: [
           Text(
             'Question ${asked + 1} of 5',
@@ -530,6 +552,7 @@ class _ClarificationState extends State<ClarificationScreen> {
               label: Text(busy ? 'Saving answer...' : 'Continue'),
             ),
           ),
+          const SizedBox(height: AppTheme.space24),
         ],
       ),
     );
@@ -570,7 +593,11 @@ class _SupportPlanState extends State<SupportPlanScreen> {
       if (mounted) {
         setState(() => retrying = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Analysis is still unavailable: $error')),
+          SnackBar(
+            content: Text(
+              'Analysis is still unavailable: ${DioClient.userMessage(error)}',
+            ),
+          ),
         );
       }
     }
@@ -1087,10 +1114,9 @@ class _CrowdfundingScreenState extends State<CrowdfundingScreen> {
     }
   }
 
-  void _showError(Object error) => ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
-  );
-
+  void _showError(Object error) => ScaffoldMessenger.of(
+    context,
+  ).showSnackBar(SnackBar(content: Text(DioClient.userMessage(error))));
 }
 
 class CaseToolsScreen extends StatelessWidget {
@@ -1251,6 +1277,7 @@ class _ChatState extends State<ChatScreen> {
   List<Map<String, dynamic>> items = [];
   bool loading = true;
   bool sending = false;
+  String? loadError;
   late final Timer timer;
   @override
   void initState() {
@@ -1260,15 +1287,22 @@ class _ChatState extends State<ChatScreen> {
   }
 
   Future<void> _load() async {
+    if (mounted && loadError != null) setState(() => loading = true);
     try {
       final values = await refRepo(widget.store).messages(widget.caseModel.id);
       if (mounted)
         setState(() {
           items = values;
           loading = false;
+          loadError = null;
         });
-    } catch (_) {
-      if (mounted) setState(() => loading = false);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          loading = false;
+          loadError = DioClient.userMessage(error);
+        });
+      }
     }
   }
 
@@ -1287,7 +1321,18 @@ class _ChatState extends State<ChatScreen> {
       children: [
         if (loading) const LinearProgressIndicator(),
         Expanded(
-          child: items.isEmpty
+          child: loadError != null
+              ? EmptyState(
+                  icon: Icons.cloud_off_outlined,
+                  title: 'Messages could not be loaded',
+                  message: loadError!,
+                  action: OutlinedButton.icon(
+                    onPressed: loading ? null : _load,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Try again'),
+                  ),
+                )
+              : items.isEmpty
               ? const EmptyState(
                   icon: Icons.forum_outlined,
                   title: 'No messages yet',
@@ -1330,12 +1375,23 @@ class _ChatState extends State<ChatScreen> {
                   : () async {
                       if (input.text.trim().isEmpty) return;
                       setState(() => sending = true);
-                      await refRepo(
-                        widget.store,
-                      ).sendMessage(widget.caseModel.id, input.text.trim());
-                      input.clear();
-                      await _load();
-                      if (mounted) setState(() => sending = false);
+                      try {
+                        await refRepo(
+                          widget.store,
+                        ).sendMessage(widget.caseModel.id, input.text.trim());
+                        input.clear();
+                        await _load();
+                      } catch (error) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(DioClient.userMessage(error)),
+                            ),
+                          );
+                        }
+                      } finally {
+                        if (mounted) setState(() => sending = false);
+                      }
                     },
               icon: const Icon(Icons.send),
               tooltip: 'Send message',
