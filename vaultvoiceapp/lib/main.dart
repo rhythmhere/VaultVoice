@@ -239,16 +239,26 @@ void showCaseCreated(BuildContext context, SecureStore store, dynamic c) {
         TextButton(
           onPressed: () {
             Navigator.pop(context);
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (_) => CaseScreen(store: store, caseModel: c),
-              ),
-            );
+            openCaseAfterCreation(context, store, c as CaseModel);
           },
           child: const Text('Continue'),
         ),
       ],
+    ),
+  );
+}
+
+void openCaseAfterCreation(
+  BuildContext context,
+  SecureStore store,
+  CaseModel caseModel,
+) {
+  Navigator.pushReplacement(
+    context,
+    MaterialPageRoute(
+      builder: (_) => caseModel.questions.isEmpty
+          ? SupportPlanScreen(store: store, caseModel: caseModel)
+          : ClarificationScreen(store: store, caseModel: caseModel),
     ),
   );
 }
@@ -294,17 +304,299 @@ class _RecoveryState extends State<RecoveryScreen> {
                     try {
                       final c = await refRepo(store).login(id.text);
                       if (!mounted) return;
-                      navigator.pushReplacement(
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              CaseScreen(store: store, caseModel: c),
-                        ),
-                      );
+                      openRecoveredCase(navigator.context, store, c);
                     } catch (_) {
                       if (mounted) setState(() => busy = false);
                     }
                   },
             child: Text(busy ? 'Opening...' : 'Open my case'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+void openRecoveredCase(
+  BuildContext context,
+  SecureStore store,
+  CaseModel caseModel,
+) {
+  Navigator.pushReplacement(
+    context,
+    MaterialPageRoute(
+      builder: (_) => caseModel.questions.isEmpty
+          ? CaseScreen(store: store, caseModel: caseModel)
+          : ClarificationScreen(store: store, caseModel: caseModel),
+    ),
+  );
+}
+
+class ClarificationScreen extends StatefulWidget {
+  const ClarificationScreen({
+    super.key,
+    required this.store,
+    required this.caseModel,
+  });
+  final SecureStore store;
+  final CaseModel caseModel;
+  @override
+  State<ClarificationScreen> createState() => _ClarificationState();
+}
+
+class _ClarificationState extends State<ClarificationScreen> {
+  late CaseModel caseModel;
+  final answer = TextEditingController();
+  bool busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    caseModel = widget.caseModel;
+  }
+
+  @override
+  void dispose() {
+    answer.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final text = answer.text.trim();
+    if (text.isEmpty || busy || caseModel.questions.isEmpty) return;
+    setState(() => busy = true);
+    try {
+      final response = await refRepo(
+        widget.store,
+      ).clarify(caseModel.id, caseModel.questions.first, text);
+      final next =
+          ((response['next_questions'] ??
+                      response['clarifying_questions'] ??
+                      [])
+                  as List)
+              .cast<String>();
+      final updated = caseModel.copyWith(
+        questions: next,
+        clarifyingQa: ((response['clarifying_qa'] ?? []) as List)
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList(),
+        summary: response['ai_legal_summary'] as String?,
+        severity: response['severity'] as String?,
+        analysisStatus: response['analysis_status'] as String?,
+      );
+      if (!mounted) return;
+      if (next.isEmpty) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                SupportPlanScreen(store: widget.store, caseModel: updated),
+          ),
+        );
+      } else {
+        setState(() {
+          caseModel = updated;
+          answer.clear();
+          busy = false;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => busy = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Your answer could not be saved: $error')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final asked = caseModel.clarifyingQa.length;
+    return Frame(
+      store: widget.store,
+      title: 'A few gentle questions',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Question ${asked + 1} of 5',
+            style: Theme.of(context).textTheme.labelLarge,
+          ),
+          const SizedBox(height: 6),
+          LinearProgressIndicator(value: ((asked + 1) / 5).clamp(0.0, 1.0)),
+          const SizedBox(height: 22),
+          if (caseModel.clarifyingQa.isNotEmpty) ...[
+            Text(
+              'Earlier answers',
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+            const SizedBox(height: 18),
+            ...caseModel.clarifyingQa.map(
+              (item) => Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(item['question']?.toString() ?? ''),
+                      const SizedBox(height: 6),
+                      Text(
+                        item['answer']?.toString() ?? '',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+          ],
+          Text(
+            caseModel.questions.first,
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 18),
+          TextField(
+            controller: answer,
+            minLines: 4,
+            maxLines: 8,
+            enabled: !busy,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Your answer'),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: busy ? null : _submit,
+              icon: const Icon(Icons.send_outlined),
+              label: Text(busy ? 'Saving answer...' : 'Continue'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SupportPlanScreen extends StatefulWidget {
+  const SupportPlanScreen({
+    super.key,
+    required this.store,
+    required this.caseModel,
+  });
+  final SecureStore store;
+  final CaseModel caseModel;
+  @override
+  State<SupportPlanScreen> createState() => _SupportPlanState();
+}
+
+class _SupportPlanState extends State<SupportPlanScreen> {
+  late CaseModel caseModel;
+  bool retrying = false;
+  @override
+  void initState() {
+    super.initState();
+    caseModel = widget.caseModel;
+  }
+
+  Future<void> _retry() async {
+    setState(() => retrying = true);
+    try {
+      final updated = await refRepo(widget.store).retryAnalysis(caseModel.id);
+      if (mounted)
+        setState(() {
+          caseModel = updated;
+          retrying = false;
+        });
+    } catch (error) {
+      if (mounted) {
+        setState(() => retrying = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Analysis is still unavailable: $error')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final unavailable =
+        caseModel.analysisStatus == 'failed' ||
+        caseModel.analysisStatus == 'unavailable';
+    return Frame(
+      store: widget.store,
+      title: 'Your support plan',
+      child: ListView(
+        children: [
+          Text(
+            'Your next steps',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Here is a calm first overview based on what you shared. This is general information, not formal legal advice.',
+          ),
+          const SizedBox(height: 20),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.priority_high),
+              title: const Text('Safety signal'),
+              subtitle: Text(caseModel.severity ?? 'Pending'),
+            ),
+          ),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Plain-language guidance',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(caseModel.summary ?? 'Your guidance is being prepared.'),
+                ],
+              ),
+            ),
+          ),
+          Card(
+            child: const ListTile(
+              leading: Icon(Icons.phone_in_talk),
+              title: Text('Immediate help'),
+              subtitle: Text(
+                'If danger is immediate, call Nepal Police on 100 or Khabar Garaun on 1145.',
+              ),
+            ),
+          ),
+          if (unavailable) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'Your report and answers are saved. Analysis is temporarily unavailable.',
+              style: TextStyle(color: AppTheme.danger),
+            ),
+            OutlinedButton.icon(
+              onPressed: retrying ? null : _retry,
+              icon: const Icon(Icons.refresh),
+              label: Text(retrying ? 'Trying again...' : 'Try analysis again'),
+            ),
+          ],
+          const SizedBox(height: 14),
+          FilledButton.icon(
+            onPressed: () => Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (_) => MatchesScreen(
+                  store: widget.store,
+                  caseModel: caseModel,
+                  initialFlow: true,
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.arrow_forward),
+            label: const Text('See support matches'),
           ),
         ],
       ),
@@ -1121,19 +1413,23 @@ class MatchesScreen extends StatefulWidget {
     super.key,
     required this.store,
     required this.caseModel,
+    this.initialFlow = false,
   });
   final SecureStore store;
-  final dynamic caseModel;
+  final CaseModel caseModel;
+  final bool initialFlow;
   @override
   State<MatchesScreen> createState() => _MatchesState();
 }
 
 class _MatchesState extends State<MatchesScreen> {
   List<Map<String, dynamic>> matches = [];
+  late CaseModel caseModel;
   bool loaded = false;
   @override
   void initState() {
     super.initState();
+    caseModel = widget.caseModel;
     _load();
   }
 
@@ -1143,6 +1439,7 @@ class _MatchesState extends State<MatchesScreen> {
       if (mounted)
         setState(() {
           matches = value;
+          caseModel = caseModel.copyWith(matches: value);
           loaded = true;
         });
     } catch (_) {
@@ -1177,6 +1474,24 @@ class _MatchesState extends State<MatchesScreen> {
             ),
           ),
         ),
+        if (loaded && widget.initialFlow) ...[
+          const SizedBox(height: 18),
+          const Text(
+            'You can review a match now or return to it later from your case dashboard.',
+          ),
+          const SizedBox(height: 10),
+          FilledButton.icon(
+            onPressed: () => Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    CaseScreen(store: widget.store, caseModel: caseModel),
+              ),
+            ),
+            icon: const Icon(Icons.dashboard_outlined),
+            label: const Text('Open my case dashboard'),
+          ),
+        ],
       ],
     ),
   );

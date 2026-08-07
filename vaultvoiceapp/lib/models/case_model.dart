@@ -9,6 +9,7 @@ class CaseModel {
     this.analysisStatus,
     this.summary,
     this.questions = const [],
+    this.clarifyingQa = const [],
     this.evidence = const [],
     this.matches = const [],
     this.timeline = const [],
@@ -18,6 +19,7 @@ class CaseModel {
   final String id, category, district, report;
   final String? severity, status, analysisStatus, summary;
   final List<String> questions;
+  final List<Map<String, dynamic>> clarifyingQa;
   final List<Map<String, dynamic>> evidence, matches, timeline;
   final List<Map<String, dynamic>> crowdfundingRequests, crowdfundingCampaigns;
   factory CaseModel.fromJson(Map<String, dynamic> j) => CaseModel(
@@ -32,6 +34,9 @@ class CaseModel {
     questions:
         ((j['clarifying_questions'] ?? j['next_questions'] ?? []) as List)
             .cast<String>(),
+    clarifyingQa: ((j['clarifying_qa'] ?? []) as List)
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList(),
     evidence: ((j['evidence'] ?? []) as List)
         .map((e) => Map<String, dynamic>.from(e))
         .toList(),
@@ -47,5 +52,30 @@ class CaseModel {
     crowdfundingCampaigns: ((j['crowdfunding_campaigns'] ?? []) as List)
         .map((e) => Map<String, dynamic>.from(e))
         .toList(),
+  );
+
+  CaseModel copyWith({
+    String? severity,
+    String? analysisStatus,
+    String? summary,
+    List<String>? questions,
+    List<Map<String, dynamic>>? clarifyingQa,
+    List<Map<String, dynamic>>? matches,
+  }) => CaseModel(
+    id: id,
+    category: category,
+    district: district,
+    report: report,
+    severity: severity ?? this.severity,
+    status: status,
+    analysisStatus: analysisStatus ?? this.analysisStatus,
+    summary: summary ?? this.summary,
+    questions: questions ?? this.questions,
+    clarifyingQa: clarifyingQa ?? this.clarifyingQa,
+    evidence: evidence,
+    matches: matches ?? this.matches,
+    timeline: timeline,
+    crowdfundingRequests: crowdfundingRequests,
+    crowdfundingCampaigns: crowdfundingCampaigns,
   );
 }

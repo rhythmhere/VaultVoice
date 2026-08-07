@@ -50,6 +50,9 @@ class VaultRepository {
     '/api/cases/$id/clarify',
     data: {'question': question, 'answer': answer},
   )).data;
+  Future<CaseModel> retryAnalysis(String id) async => CaseModel.fromJson(
+    (await client.dio.post('/api/cases/$id/analyze')).data,
+  );
   Future<void> _saveSession(Map<String, dynamic> j) async {
     await store.write(SecureStore.caseId, j['case_id']);
     await store.write(SecureStore.sessionToken, j['session_token']);
